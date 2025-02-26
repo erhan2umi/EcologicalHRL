@@ -11,6 +11,7 @@ or
 
 
 HOW TO RUN:
+
 (1) For INVIDIAL PARTICIPANT emulation
 
 From the Matlab console go to the directory of the code, and type HIREL_model.
