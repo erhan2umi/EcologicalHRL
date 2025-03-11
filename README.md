@@ -25,10 +25,10 @@ script to generate multi-participant emulated experiments (see below).
 
 From the Matlab consolude  go to the directory of the code, and type repeatEXP.
 This scripts calls HIREL_model.m to make a virtual experiment over "repeats" many
-times (Change repeats to a desired value in the code). 
+times (change repeats to a desired value in the code). 
 Each repeat is considered analogous to an experiment by a human participant.
 All the virtual participant data is stored in a folder with a name constructed from the date 
-and time of the execution. The folder is then can be analysed, for example by 
+and time of the execution. The folder can then be analysed, for example by 
 show_stats_disc_succnorm_sem.m which generates several plots about the experiments.
 
 HOW TO PLOT MULTI-PARTICIPANT RESULTS:

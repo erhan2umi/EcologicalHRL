@@ -1,5 +1,7 @@
-
-function show_last_trails_v1(exper)
+% This script makes summary plot of the given experiment data structure 
+% (exper). Also it makes a plot to compare unperturbed, last perturbed,
+% catch and 1st deadaptation trials
+function show_last_trials(exper)
 ff=33;
 figure(ff); clf;
 subplot(2,3,1);
@@ -43,5 +45,6 @@ plot(exe_data.act_cartpos(:,1), exe_data.act_cartpos(:,2),'-','Linewidth', 2, 'C
 axis equal;
 axis([-0.5,+0.5, 0.45, 1.3]);
 legend('unpert','lastpert','catch','1^{st}dead');
+title('COM plots of unperturbed, last perturbed, catch and 1^{st} deadaptation trials')
 %legend('unpert_d','unpert','lastpert','catch','1^{st}dead_d','1^{st}dead');
 

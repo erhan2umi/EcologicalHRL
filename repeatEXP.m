@@ -10,7 +10,7 @@
 
 
 clear;
-repeats = 3 ;
+repeats = 10; % Number of experiments to run (# virtual subjects)
 c=clock;
 timestamp=sprintf('%4d_%d_%d_%d_%d',c(1),c(2),c(3),c(4),c(5));
 
@@ -27,6 +27,7 @@ for k=1:repeats
     fprintf('[%s] is being executed...\n',command);
     eval(command);
 end
-com = sprintf('show_stats_disc_succnorm_sem(''%s'',%d);', foldername, repeats); % ERH2025: for the paper _sem is used
+com = sprintf('show_stats_disc_succnorm_sem(''%s'',%d);', foldername, repeats);  
 fprintf('Executing %s...\n',com);
 eval(com)
+fprintf('** The experiment data is saved to folder %s **\n',foldername);

@@ -68,11 +68,11 @@ end
 
                     
 if (SPpar.NumCPm==3)
-    initialTraj_cart_CPm_fb2 = [0.1    0.15  0.1 ;     % We use this as additional data to leanr unperturbed dynamics.
+    initialTraj_cart_CPm_fb2 = [0.1    0.15  0.1 ;     % We use this as additional data to learn unperturbed dynamics.
                                0.5    .9    1.2];
 end
 if (SPpar.NumCPm==2)
-initialTraj_cart_CPm_fb2 = [0.1      0.1 ;     % We use this as additional data to leanr unperturbed dynamics.
+initialTraj_cart_CPm_fb2 = [0.1      0.1 ;     % We use this as additional data to learn unperturbed dynamics.
                            0.5       1.2];
 end
 
@@ -146,18 +146,15 @@ if ~SILENT
 end
 ccpm = initialTraj_cart_CPm;
 last_cpert = 0;
-errL = ones(EXE.numtrial,1);
+errL = [];
 
-%-------------------- HRL ----------------------
+%---------------------------- HRL ---------------------------------
 mu = mu_init;             % state are the knot configuration (CPm)
 a = mu;                   % actions on the knots
-
-
-success_cnt_reached = 0;
+success_cnt_reached = 0; % We need 60 successes.
 it = 0;  
 impc = 0;
-MAXIT = 320;    % should be this same as EXE.numtrial?  EXE.numtrial is used for experience buffer size setting. Better check it.
-%[baseline_cost, fallcost0, zmp, xy, Th]  = objfun(state2CPm(mu),CPb,CPe,kb,q1s,q2s,t0,t1,par);
+MAXIT = 320; % If cannot get 60 sucesses we give up after this many iterations.    
 trajSP = make_trajSP(initialTraj_cart_CPm, EXE.endtime);
 [baseline_compcost_pert, safetycost_pert, fallcost_pert, ~, exe_data] = execute_movement(x0, trajSP, 0, EXE.timesteps, EXE.endtime, perturbed, 116);  
 title('perturbed run with learned unpert.dyn and NO feedback','FontSize', 8);
@@ -250,7 +247,6 @@ for cond= [cond_unPERT cond_PERT cond_CATCH cond_PERTx cond_DEAD] % [ unperturbe
     else
         environ = unperturbed;
         dangerCond = 0;
-        %sig = base_sig*0;
     end
     
     if cond == cond_PERT 
@@ -260,7 +256,7 @@ for cond= [cond_unPERT cond_PERT cond_CATCH cond_PERTx cond_DEAD] % [ unperturbe
         body.SAFETY_SWITCH_succ = round(random('norm', body.SAFETY_SWITCH_succ_mu, body.SAFETY_SWITCH_succ_sig));
     end
     if cond == cond_PERTx  %ignore catch trials effect on mu
-        mu = good_pertmu;
+        mu = good_pertmu;  % May use good_perta too
         if isempty(mu), mu=mu_init; end
         body.SAFETY_SWITCH_succ = round(random('norm', body.SAFETY_SWITCH_succ_mu, body.SAFETY_SWITCH_succ_sig));
     end
@@ -270,10 +266,10 @@ for cond= [cond_unPERT cond_PERT cond_CATCH cond_PERTx cond_DEAD] % [ unperturbe
             fprintf('Strange! No succesful unperturbed trial was achieved, using initial mu.\n');
             mu = [reshape(initialTraj_cart_CPm',N,1)];
         else
-            mu = lastunpertmu;
+            mu = lastunpertmu;  % Deadaptation: an underperturbed plan from memory retreived
         end
-        unpertW_weight = 0.75;
-        W = W*(1-unpertW_weight)+ unpertW_weight*unpertW;  % ERH
+        unpertW_weight = 0.75;  % Deadaptation: triggers a change in dynamics towards unperturbed dynamics but not completely 
+        W = W*(1-unpertW_weight)+ unpertW_weight*unpertW;  
     end
     
     if cond == cond_CATCH
@@ -288,14 +284,14 @@ for cond= [cond_unPERT cond_PERT cond_CATCH cond_PERTx cond_DEAD] % [ unperturbe
             mu = good_perta;
         end
 
-        bias = (failed && (cond == cond_PERT))*0.03*[1 1 1 0 0 0]';  %ERH was 0.025*
+        bias = (failed && (cond == cond_PERT))*0.03*[1 1 1 0 0 0]';  % Apply a forward lean bias in search space
         aa = random('norm',mu+bias ,sig*COV); 
+        % vvvv Apply constrains to the sampled action vvvvv
         aa(3)=aa(2)/1.5;
         aa(1)= aa(2)/1.5;
-        % vv Apply constrains to the sampled action
         a = aa; 
         ina = a;
-        if SPpar.NumCPm>2, 
+        if SPpar.NumCPm>2
             if a(2) < 0.5*(a(1)+a(3)), a(2) = 0.5*(a(1)+a(3))*1.01; end
             if a(6) < a(5), a(6) = a(5); end
             if a(4) > a(5), a(4) = a(5); end
@@ -306,26 +302,21 @@ for cond= [cond_unPERT cond_PERT cond_CATCH cond_PERTx cond_DEAD] % [ unperturbe
             %in_outa = [ina a]
             %fprintf('violc:%d\n',violc);
         end
-        % ^^ Apply constrains to the sampled action
-        % vv get the spline corresponding to action a, an make rollout, get the costs and data for Idyn learning.
+        % ^^^^ Apply constrains to the sampled action ^^^^
+       
+        % vvvv   Get the spline corresponding to action a, an make a   vvvv
+        %        rollout, get the costs and data for Idyn learning.     
         
-        delta = a - mu;
-        
-        
+        delta = a - mu;       
         trajSP = make_trajSP(a(1:N), EXE.endtime);  
         if SILENT 
             showwin = (mod(it,50)==0);
         else
-            showwin = (mod(it,1 )==0);   % To see realtime mod(it,1)
+            showwin = (mod(it,1 )==0);   % See learning in realtime
         end
         
-        %if cit>body.SAFETY_SWITCH_succ, body.xnoiseon = 1; end
+    
         lastEXECW = W;
-        %execom = a(1:N)'
-        
-        %EXE.noCONTafterFALL=1;
-        %if (cond==cond_DEAD && cit==1) EXE.noCONTafterFALL=1; end
-        %if (cond==cond_CATCH && cit==1) EXE.noCONTafterFALL=1; end
         [compcost, safetycost, fallcost0, fallstat, exe_data]= execute_movement(x0, trajSP, fb_MUL,EXE.timesteps, EXE.endtime, environ, showwin*winmul);
         ylabel(sprintf('Learning...(trial:%d)(%s)', it,condtxt{cond}));
         fallcost = abs(fallcost0);  % treat fall cost as usual.
@@ -338,13 +329,14 @@ for cond= [cond_unPERT cond_PERT cond_CATCH cond_PERTx cond_DEAD] % [ unperturbe
         last_failed = failed;
         failed = (fallstat ~= EXE.fallstat_SUCC); 
 
-        compcost_adv = (baseline_compcost - compcost);  
-        fallcost_adv = (baseline_fallcost -fallcost);
+        compcost_adv   = (baseline_compcost - compcost);  
+        fallcost_adv   = (baseline_fallcost -fallcost);
         safetycost_adv = (baseline_safetycost - safetycost);
 
-        baseline_compcost   = baseline_compcost*  (1-EXE.compcost_rho)+ EXE.compcost_rho*compcost;      
-        baseline_fallcost   = baseline_fallcost*  (1-EXE.fallcost_rho)+ EXE.fallcost_rho*fallcost;
-        baseline_safetycost = baseline_safetycost*(1-EXE.safetycost_rho)+ EXE.safetycost_rho*safetycost; 
+        % Exponential averaging of the costs
+        baseline_compcost   = baseline_compcost*  (1-EXE.compcost_rho)   + EXE.compcost_rho*compcost;      
+        baseline_fallcost   = baseline_fallcost*  (1-EXE.fallcost_rho)   + EXE.fallcost_rho*fallcost;
+        baseline_safetycost = baseline_safetycost*(1-EXE.safetycost_rho) + EXE.safetycost_rho*safetycost; 
         
         % Begin IDYN learning
         for kkk=1:1
@@ -355,7 +347,7 @@ for cond= [cond_unPERT cond_PERT cond_CATCH cond_PERTx cond_DEAD] % [ unperturbe
             data = merge_data(data, exe_data);
 
            [err, maxerr] = learn_batch(1e-8, EXE.learning_type, body.par);  % produces global W
-            errL(trialc) = sum(err);
+            % errL(trialc) = sum(err);  %REV
             idyn_err = sum(err);
             track_err = sum(mean(abs(data.del_q)));
             my_err = track_err;   % track_err or idyn_err
@@ -373,7 +365,7 @@ for cond= [cond_unPERT cond_PERT cond_CATCH cond_PERTx cond_DEAD] % [ unperturbe
                 fprintf('fb_MUL saturated at %d trial:%d\n',it);
             end
             if cond==cond_DEAD
-                fb_MUL = 2000; %MAX_fb_MUL;  %ERH
+                fb_MUL = 2000; % Fixed multiplier in deadaptation condition
             end
             %fprintf('Roll %d done (FBMUL:%3.2f).\n',trialc,fb_MUL);
         else
@@ -387,12 +379,11 @@ for cond= [cond_unPERT cond_PERT cond_CATCH cond_PERTx cond_DEAD] % [ unperturbe
 
 
         if (mod(trialc,50)==1 || failed==22 || trialc==MAXIT)
-           plot_data(data, body.par, 120,sprintf('roll:%d ',trialc));
+           plot_data(data, body.par, 120,sprintf('roll:%d ',trialc));  % Show plots for idyn learning
            drawnow;
         end
 
-  
-        % store data for plotting etc. 
+        % Store data for plotting etc. 
         exper.h_a(it+1,:) = a;
         exper.h_sig(it+1) = sig;
         exper.h_costs(it+1,:) = [compcost, safetycost, fallcost, exe_data.fallcost_ba, exe_data.fallcost_fr];
@@ -407,38 +398,33 @@ for cond= [cond_unPERT cond_PERT cond_CATCH cond_PERTx cond_DEAD] % [ unperturbe
         
         exper.h_baseline_costs(it+1,:) = [baseline_compcost, baseline_safetycost,  baseline_fallcost];
         exper.h_fb_MUL(it+1) = fb_MUL;
-        %exper.h_gradnorms(it+1,:)=[norm(delcc), norm(delfc), norm(delsc)]; 
         LO = -1;
         HI =  1;
-        compcost_advclip   = max([min([HI,compcost_adv]), LO]);
-        fallcost_advclip   = max([min([HI,fallcost_adv]), LO]);   % if not fall second part should be almost zero
+        compcost_advclip   = max([min([HI,compcost_adv]),  LO]);
+        fallcost_advclip   = max([min([HI,fallcost_adv]),  LO]);   % if not fall second part should be almost zero
         safetycost_advclip = max([min([HI,safetycost_adv]), LO]);
         if ~SILENT
-            %COMP_FALL_SAFETY_advclips = [fallcost_advclip fallcost_advclip safetycost_advclip ]*100
+            %COMP_FALL_SAFETY_advclips = [fallcost_advclip fallcost_advclip safetycost_advclip ]*100  % Uncomment to see this printed
         end
-        
 
         if last_failed || failed || cit < body.SAFETY_SWITCH_succ
-            netadv =failed*fallcost_advclip +  dangerCond*(1-failed)*safetycost_advclip + 0.0*effort_try*safetycost_advclip;  % ERH   1*(1-failed) was 0.75*(1-failed)
+            netadv =failed*fallcost_advclip +  dangerCond*(1-failed)*safetycost_advclip + 0.0*effort_try*safetycost_advclip;  
             effort_try = 0;
         else
             if cond~=cond_unPERT, fprintf('ACTING with CCOST adv:%1.7f\n',compcost_advclip); end
             netadv = (COST_grad_mul*compcost_advclip + 0*fallcost_advclip + 0*safetycost_advclip);
             effort_try=1;
         end
-        mu = mu + lrate*delta*netadv;
-  
-        
+        mu = mu + lrate*delta*netadv;       
         
         if (failed==1)
            fprintf('%s: %d/%d> (%s) FAILED  (succ:%d) FBG:%3.1f comp[cost,baseln,adv:%3.3f, %3.3f, %+3.3f] safety[cost,baseln,adv:%3.3f, %3.3f, %+3.3f] fall[cost,baseln,adv:%3.3f, %3.3f, %+3.3f] [sig:%1.4f]\n', ...
                 condtxt{cond}, it+1, MAXIT, EXE.fallstat_txt{4+fallstat}, succ(cond), fb_MUL, compcost,baseline_compcost,compcost_adv, safetycost,baseline_safetycost,safetycost_adv, fallcost,baseline_fallcost,fallcost_adv, sig);
-   
         else   % NO FALL 
             succ(cond) = succ(cond) + 1;
             fprintf('%s: %d/%d> EXE OK (succ:%d) FBG:%3.1f comp[cost,baseln,adv:%3.3f, %3.3f, %+3.3f] safety[cost,baseln,adv:%3.3f, %3.3f, %+3.3f] fall[cost,baseln,adv:%3.3f, %3.3f, %+3.3f] [sig:%1.4f]\n', ...
                 condtxt{cond}, it+1, MAXIT,  succ(cond), fb_MUL,compcost,baseline_compcost,compcost_adv, safetycost,baseline_safetycost,safetycost_adv, fallcost,baseline_fallcost,fallcost_adv, sig);
-            %a_mu = [a, mu]'
+            %a_mu = [a, mu]'  % Uncomment to see this printed
 
             if (cond==cond_PERT) 
                 if((gooda_safety_cost*1 >= 1*safetycost) || isempty(good_perta))
@@ -452,14 +438,13 @@ for cond= [cond_unPERT cond_PERT cond_CATCH cond_PERTx cond_DEAD] % [ unperturbe
                     good_fb_MUL= exe_data.fb_MUL;
                     good_pert_it = it+1;
                     gooda_safety_cost = safetycost;
+                    %Uncomment below  for extra commenting:
                     %fprintf('*** TRIAL :%d> New safepoint  safety:%2.5f ccost:%2.5f [ITA:%2.5f. TA:%2.5f]\n',good_pert_it,gooda_safety_cost,compcost, exper.h_ITA(it+1), exper.h_TA(it+1));
                     %execom
                     %fprintf('*** \n');
                 end
-            end
-                
+            end                
             impc = impc + 1;
-
             if cond==cond_PERT && succ(cond) == EXE.reqsucc
                 success_cnt_reached = 1;
                 exper.lastPERTix = trialc;
@@ -470,13 +455,13 @@ for cond= [cond_unPERT cond_PERT cond_CATCH cond_PERTx cond_DEAD] % [ unperturbe
         end
         
         it = it + 1; 
-        sig = sig*0.997; %0.997 for short experiments
+        sig = sig*0.997; % Reduce the exploration (std in the normal distrubtion)
         
         if (it>=MAXIT) 
             done=true; 
         elseif cond==cond_unPERT
             done = (cit == EXE.unPERT_cnt);
-            lastunpertmu = a; % made is a
+            lastunpertmu = a; 
             if done,  exper.lastunPERTexe = exe_data; end
         elseif cond==cond_PERT
             done = success_cnt_reached;
@@ -485,13 +470,11 @@ for cond= [cond_unPERT cond_PERT cond_CATCH cond_PERTx cond_DEAD] % [ unperturbe
                 exper.lastPERTexe = exe_data; 
                 exper.condTrialCounts(cond_PERT) = cit;
                 W = good_pertW;
-                exper.pert_IDYN_W = good_pertW; %exe_data.W{1};
-                exper.pert_fb_MUL = good_fb_MUL; %exe_data.fb_MUL;
+                exper.pert_IDYN_W = good_pertW; 
+                exper.pert_fb_MUL = good_fb_MUL; 
                 exper.pert_gooda = good_perta;
                 [costLastPert, fallcostLastPert, exe_dataLastPert]= execute_movement(x0, make_trajSP(good_perta, EXE.endtime), good_fb_MUL,EXE.timesteps, EXE.endtime, environ, 1*1001);
                 ylabel(sprintf('Last cache safe...(cache trial:%d)(%s)', good_pert_it,condtxt{cond}));
-                %[costLastPert, fallcostLastPert, exe_dataLastPert]= execute_movement(x0, trajSP, fb_MUL,EXE.timesteps, EXE.endtime, environ, 1*1001);
-                %ylabel(sprintf('Last PERT...(trial:%d)(%s)', it,condtxt{cond}));
             end
         elseif cond==cond_CATCH
             done = (cit == 1);
@@ -509,9 +492,7 @@ for cond= [cond_unPERT cond_PERT cond_CATCH cond_PERTx cond_DEAD] % [ unperturbe
             fprintf('ABOARTING! No such condition!\n');
         end
     end  % while(~done) learning_loop , i.e. end of experiment trials
-
     exper.lasttrialno = trialc;
-
 end %for
 
 if ( exper.success_cnt_reached)
@@ -531,7 +512,7 @@ end
 exper.unPERTix  = 1 : EXE.unPERT_cnt;
 exper.PERTix    = EXE.unPERT_cnt+1 : exper.lastPERTix;  %exper.catchtrial_no-1;
 exper.PERTxix   = exper.catchtrial_no+1 : EXE.PERTx_cnt+exper.catchtrial_no;
-exper.DEADix = exper.PERTxix(end)+1: EXE.DEAD_cnt+exper.PERTxix(end);
+exper.DEADix    = exper.PERTxix(end)+1: EXE.DEAD_cnt+exper.PERTxix(end);
 
 if (exper.lastPERTix==-1)
     fprintf('****** CANNOT make sufficient succesfull stand ups! Will not plot data ... *********\n');
@@ -545,24 +526,12 @@ end
 figure(222); clf;
 %set(gcf,'Position',[320,430,700,930]);
 subplot(4,1,1); cla;
-%plot(exper.h_cost, 'Color', [0.6 0.6 0.6],'Linewidth',2);  hold on; 
-
-%bar((exper.h_fallcost(1:it)~=0)*max([0.1;exper.h_baseline_cost(1:it)+exper.h_adv(1:it)]),'FaceColor',[1 0.7 0.7],'EdgeColor','none'); hold on
-
-%bar((exper.h_failed(1:it))*max([0.1;exper.h_baseline_costs(1:it,1)+exper.h_costadvs(1:it,1)]),'FaceColor',[0.7 0.7 0.7],'EdgeColor','none'); hold on
 plot(exper.h_baseline_costs(1:it,EXE.COMP), 'Color', [0.2 0.2 0.2],'Linewidth',3);  hold on;
-%plot(exper.h_baseline_costs(1:it,COMP)+exper.h_costadvs(1:it,COMP),'.-','Color',[0.2 0.2 1],'Linewidth',1);
 plot(exper.h_baseline_costs(1:it,EXE.SAFETY), 'Color', [0.2 0.6 0.2],'Linewidth',3);  hold on;
-%plot(exper.h_baseline_costs(1:it,SAFETY)+exper.h_costadvs(1:it,SAFETY),'.-','Color',[0.2 0.6 1],'Linewidth',1);
 plot(exper.h_baseline_costs(1:it,EXE.FALL), 'Color', [0.8 0.4 0.2],'Linewidth',3);  hold on;
-%plot(exper.h_baseline_costs(1:it,FALL)+exper.h_costadvs(1:it,FALL),'.-','Color',[0.8 0.4 1],'Linewidth',1);
-%plot(exper.h_baseline_cost+exper.h_adv,'.','Color',[0 0 0]);
-plot(exper.h_fb_MUL(1:it)/50,'-','Linewidth',2, 'Color',[1 0.1 0.1]);
-%ylim([0*min(exper.h_baseline_costs(:,1)+exper.h_costadvs(:,1)),max(exper.h_baseline_costs(:,1)+exper.h_costadvs(:,1))]);
+plot(exper.h_fb_MUL(1:it),'-','Linewidth',2, 'Color',[1 0.1 0.1]);
 grid on;
-%xlabel('trial no');
-legend('compcost','safetycost','fallcost','feedbMUL/50')
-%legend('falls','compcost','+','safetycost','+','fallcost','+','feedbMUL/120')
+legend('compcost','safetycost','fallcost','feedbMUL')
 
 subplot(4,1,2); cla;
 hhh = max([0.1,max(exper.h_costadvs(1:it,EXE.COMP))]);
@@ -574,7 +543,7 @@ plot(exper.h_costadvs(1:it,EXE.SAFETY),'.-','Color',[0.2 0.6 0.2],'Linewidth',3)
 plot(exper.h_costadvs(1:it,EXE.FALL),'.-','Color',[0.8 0.4 0.2],'Linewidth',3);
 ylim([-hhh,hhh]);
 grid on;
-%xlabel('trial no');
+
 legend('falls','','compcost_{adv}','safetycost_{adv}','fallcost_{adv}')
 
 subplot(4,1,3); cla;
@@ -585,9 +554,7 @@ plot(exper.PERTxix, exper.h_TA(exper.PERTxix), 'Color', [1 0.5 0.0],'Linewidth',
 plot(exper.DEADix, exper.h_TA(exper.DEADix), 'Color', [1 0.8 0.0],'Linewidth',2); hold on;
 plot(exper.h_ITA(1:it)*100, 'Color', [0 0.6 0.0],'Linewidth',2); hold on;
 ylabel('cm^2');
-%plot(exper.h_cost(1:it)*10, 'Color', [0 0.2 0.9],'Linewidth',2); hold on;
-%ylabel('fatness'); 
-%xlabel('trial no'); 
+
 xlim([0,exper.lasttrialno])
 legend('TA_{unp}','TA_{per}','CT','TA_{perX}','TA_{dead}','100*ITA');
 
@@ -619,14 +586,11 @@ legend('fall','catch','success','unper_0','unper_1','fallcost','fallcost_{unp}',
  ylabel(sprintf('Final (it:%d) performance (a)', it));
  drawnow;
 
- 
- trajSP = make_trajSP(good_pertmu, EXE.endtime);  
- [compcost, fallcost, exe_data]= execute_movement(x0, trajSP, exper.pert_fb_MUL, EXE.timesteps, EXE.endtime, perturbed, 1011);
- ylabel(sprintf('Final (it:%d) performance (mu)', it));
- drawnow;
-
-
- 
+ % You can show the performance based on the best policy mean (corresponding action is sampled from it):
+ %trajSP = make_trajSP(good_pertmu, EXE.endtime);  
+ %[compcost, fallcost, exe_data]= execute_movement(x0, trajSP, exper.pert_fb_MUL, EXE.timesteps, EXE.endtime, perturbed, 1011);
+ %ylabel(sprintf('Final (it:%d) performance (mu)', it));
+ %drawnow;
 
 pert_ix = exper.PERTix;   %
 succ_pert_ix = pert_ix(exper.h_failed(pert_ix)~=1);
@@ -641,74 +605,54 @@ allix = 1:exper.lasttrialno;
 allfix = allix(exper.h_failed==1);
 allsix = allix(exper.h_failed==1);
 
-analyzeSFS(exper, 123, EXE);  % plot in figure 123 and using cost as COMP (composite)
-figure(1311); clf;hold on
-ha=exper.h_a(exper.succ_pert_ix,:);
-if (~SPpar.radial), 
-    if SPpar.NumCPm>2
-        scatter(ha(:,[3]), ha(:,[3+SPpar.NumCPm])); 
-        scatter(ha(:,[1]), ha(:,[1+SPpar.NumCPm])); 
-        scatter(ha(:,[2]), ha(:,[2+SPpar.NumCPm]));  
-    end
-    cc = exper.h_costs(exper.succ_pert_ix,EXE.COMP);
-    [ccval, ccix] = min(cc);
-    plot( ha(ccix,1:SPpar.NumCPm), ha(ccix,SPpar.NumCPm+1:SPpar.NumCPm*2), 'k-', 'Linewidth',2);
-    text( mean(ha(ccix,1:2)), mean(ha(ccix,SPpar.NumCPm+[1:2])), sprintf('%1.3f',cc(ccix)));
-    text( mean(ha(:,1)), mean(ha(:,1+SPpar.NumCPm))+0.02,sprintf('(%1.3f, %1.3f)', mean(ha(:,1)), mean(ha(:,1+SPpar.NumCPm))));
-    text( mean(ha(:,2)), mean(ha(:,2+SPpar.NumCPm))+0.04,sprintf('(%1.3f, %1.3f)', mean(ha(:,2)), mean(ha(:,2+SPpar.NumCPm))));
-    %text( mean(ha(:,3)), mean(ha(:,3+1+SPpar.NumCPm))-0.02,sprintf('(%1.3f, %1.3f)', mean(ha(:,3)), mean(ha(:,6))));
-    grid minor;
-    title(sprintf('Successful trials (%d/%d)',length(cc),length(exper.PERTix)));
-    drawnow;
-    [~, sortix] = sort(cc);  oldk = 0;
-
-    if (SILENT || false),  kkEnd = -1; else, kkEnd = length(cc); end
-    for kk = 1:kkEnd
-        figure(1311);
-        k = sortix(kk);
-        if oldk~=0
-            plot( ha(oldk,1:SPpar.NumCPm), ha(oldk,SPpar.NumCPm+1:SPpar.NumCPm*2), 'y-', 'Linewidth',1.2);   
-            %plot(oldpos(:,1),oldpos(:,2),'c.');
+analyzeSFS(exper, 123, EXE);  % Compute SFS and SS stats and plot (fig:123) TA/ITA with failures marked
+show_policyplans = 0;         % Make it 1 to plot the explored plans
+if show_policyplans
+    figure(1311); clf;hold on
+    ha=exper.h_a(exper.succ_pert_ix,:);
+    if (~SPpar.radial)
+        if SPpar.NumCPm>2
+            scatter(ha(:,[3]), ha(:,[3+SPpar.NumCPm])); 
+            scatter(ha(:,[1]), ha(:,[1+SPpar.NumCPm])); 
+            scatter(ha(:,[2]), ha(:,[2+SPpar.NumCPm]));  
         end
-        oldk = k;
-        plot( ha(k,1:SPpar.NumCPm), ha(k,SPpar.NumCPm+1:SPpar.NumCPm*2), 'r-', 'Linewidth',1.2); hold on;
-        %temptrajSP = make_trajSP(ha(k,:)', EXE.endtime);
-        %[pos, state] = trajSP2cart(temptrajSP);
-        %oldpos = pos;
-        %plot(pos(:,1),pos(:,2),'m.');  
-        %text( mean(ha(k,1:2)), mean(ha(k,4:5))+k*0.005, sprintf('%1.3f',cc(k)));
-        xs = sprintf('%dth compcost:%2.5f\n',kk,cc(k));
-        fprintf(xs);
-        xlabel(xs);
-        %drawnow
-        c=' ';
-        %c=input('press enter enter '' '' to quit'); 
-        if c==' ', break; end
-    end %for k
-else
-    scatter(ha(:,[1]), ha(:,[3])); 
-    scatter(ha(:,[2]), ha(:,[4]));    
+        cc = exper.h_costs(exper.succ_pert_ix,EXE.COMP);
+        [ccval, ccix] = min(cc);
+        plot( ha(ccix,1:SPpar.NumCPm), ha(ccix,SPpar.NumCPm+1:SPpar.NumCPm*2), 'k-', 'Linewidth',2);
+        text( mean(ha(ccix,1:2)), mean(ha(ccix,SPpar.NumCPm+[1:2])), sprintf('%1.3f',cc(ccix)));
+        text( mean(ha(:,1)), mean(ha(:,1+SPpar.NumCPm))+0.02,sprintf('(%1.3f, %1.3f)', mean(ha(:,1)), mean(ha(:,1+SPpar.NumCPm))));
+        text( mean(ha(:,2)), mean(ha(:,2+SPpar.NumCPm))+0.04,sprintf('(%1.3f, %1.3f)', mean(ha(:,2)), mean(ha(:,2+SPpar.NumCPm))));
+        grid minor;
+        title(sprintf('Successful trials (%d/%d)',length(cc),length(exper.PERTix)));
+        drawnow;
+        [~, sortix] = sort(cc);  oldk = 0;
+    else
+        scatter(ha(:,[1]), ha(:,[3])); 
+        scatter(ha(:,[2]), ha(:,[4]));    
+    end
+end
+show_compositecost = 0;
+if show_compositecost==1 && ~SILENT
+    figure(1312); clf;
+    subplot(2,1,1);
+    plot(exper.h_costs(succ_pert_ix(sortix),EXE.COMP), exper.h_TA(succ_pert_ix(sortix)),'b-','Linewidth',2); hold on;
+    plot(exper.h_costs(succ_pert_ix(sortix),EXE.COMP), exper.h_TA(succ_pert_ix(sortix)),'o'); hold on;
+    grid minor
+    xlabel('compcost'); ylabel('TA');
+    subplot(2,1,2);
+    plot(exper.h_costs(succ_pert_ix(sortix),EXE.COMP), exper.h_ITA(succ_pert_ix(sortix)),'b-','Linewidth',2); hold on;
+    plot(exper.h_costs(succ_pert_ix(sortix),EXE.COMP), exper.h_ITA(succ_pert_ix(sortix)),'o'); hold on;
+    grid minor
+    xlabel('compcost'); ylabel('ITA');
 end
 
-figure(1312); clf;
-subplot(2,1,1);
-plot(exper.h_costs(succ_pert_ix(sortix),EXE.COMP), exper.h_TA(succ_pert_ix(sortix)),'b-','Linewidth',2); hold on;
-plot(exper.h_costs(succ_pert_ix(sortix),EXE.COMP), exper.h_TA(succ_pert_ix(sortix)),'o'); hold on;
-grid minor
-xlabel('compcost'); ylabel('TA');
-subplot(2,1,2);
-plot(exper.h_costs(succ_pert_ix(sortix),EXE.COMP), exper.h_ITA(succ_pert_ix(sortix)),'b-','Linewidth',2); hold on;
-plot(exper.h_costs(succ_pert_ix(sortix),EXE.COMP), exper.h_ITA(succ_pert_ix(sortix)),'o'); hold on;
-grid minor
-xlabel('compcost'); ylabel('ITA');
+figure(33); clf; 
+show_last_trials(exper);
 
-
-show_last_trails_v1(exper);
-
-%-- MAIN finished here -------------
+%------------- MAIN Learning Loop Finished -------------
 
  
-
+% Create global constant variables
 function createOtherGlobals    
     global EXE
     global SPpar
@@ -716,47 +660,45 @@ function createOtherGlobals
     global RBUF RBUFc RBUFfull 
     global W dynnet first_roll
     
-    body.SQUAT_STATE = [0.5 ; 0.95*pi/2]; 
-    body.EXTENDED_STATE = [1.2 ; 1.02*pi/2]; %1.05*pi/2
+    body.SQUAT_STATE = [0.5 ; 0.95*pi/2];    % COM squating value
+    body.EXTENDED_STATE = [1.2 ; 1.02*pi/2]; % COM standing straight value
     body.SQUAT_CART = forward_kin(body.SQUAT_STATE' );
     body.EXTENDED_CART = forward_kin(body.EXTENDED_STATE');
-    body.SAFETY_SWITCH_succ_mu  = 50; 
-    body.SAFETY_SWITCH_succ_sig = 0; 
-    body.SAFETY_SWITCH_succ_sig =  body.SAFETY_SWITCH_succ_mu;
+    body.SAFETY_SWITCH_succ_mu  = 50;     % confidence reaching point mu  
+    body.SAFETY_SWITCH_succ_sig =  body.SAFETY_SWITCH_succ_mu; % and sigma
     body.cost_type     = 0;   % -1:effort 0: composite  1:safety 
-    body.effortW       = 1;   % composite cost weight 1: full effort,  0:full safety  es    
-             
+    body.effortW       = 1;   % composite cost weight 1: full effort,  0:full safety      
+                              % with effortW=1 composite aims for min effort
+                              
     body.xnoiseon      = 0;        
     body.mass = 80;
-    body.pert=3*body.mass; %perturbation coefficient
+    body.pert=3*body.mass; % Perturbation coefficient
     body.par = [body.mass, body.pert];
     body.heel_dist =  0.13;
-    body.toe_dist = 0.30;
-    body.fallcost_threshold =  0.01 ; % (0.001)*100;  % (x) x is average zmp violation in meters
+    body.toe_dist  = 0.30;
+    body.fallcost_threshold =  0.01;  % (x) x is average zmp violation in meters
     
     SPpar = [];
-    SPpar.k = 6;      % spline order (4 for cubic, 6 for quintic B-spline)
+    SPpar.k = 6;         % spline order (4 for cubic, 6 for quintic B-spline)
     SPpar.kb = 3;        % spline order at the boundaries (1-pos, 2-pos,vel, 3-pos,vel,acc)
     SPpar.radial = 0;
     SPpar.MAXRAD = 0.5;   % m
-    SPpar.MINRAD = 0.05;   % m
+    SPpar.MINRAD = 0.05;  % m
 
     SPpar.NumCPm = 3;    % number of control points to be optimized
 
     SPpar.lb_cart=repmat([0.03    ; 0.5],1,SPpar.NumCPm);     % [minx miny]
-    SPpar.ub_cart=repmat([0.22  ; 1.2],1,SPpar.NumCPm);    % [maxx maxy]
+    SPpar.ub_cart=repmat([0.22  ; 1.2],1,SPpar.NumCPm);       % [maxx maxy]
     SPpar.slb_cart = [reshape(SPpar.lb_cart',2*SPpar.NumCPm,1)];   % limits flattened
     SPpar.sub_cart = [reshape(SPpar.ub_cart',2*SPpar.NumCPm,1)];
 
 
     EXE.timesteps = 60;   % use 100 for more accurate sim
     EXE.endtime   = 1.2;
-    EXE.numtrial  = 25;   % is this used??
+ 
         
-    EXE.RBUFsize = EXE.timesteps*10;    % sample buffer for dynamic learning, if too small early samples will be lost. EXE.endtime*EXE.timesteps*EXE.numtrial samples are generated in total
+    EXE.RBUFsize = EXE.timesteps*10;    % sample buffer for dynamics learning, if too small early samples will be lost. 
     EXE.RBUFbatchsize = EXE.timesteps*4;% batch size from here.
-
-    %EXE.safety_tho=1;
 
     testx = [0,0,0,0]; 
     hx = expandX(testx,[0,0]);
@@ -767,7 +709,7 @@ function createOtherGlobals
     RBUFc = 0;
     RBUFfull = 0;
     W =zeros(EXE.INPDIM, EXE.OUTDIM);
-    dynnet = feedforwardnet(15); % hid unit size of the network to use for learning 2
+    dynnet = feedforwardnet(15);     % hidden unit size of the network to use for learning 2
     EXE.learning_type = 0;           % 2: matlab NN,  0: average batch pseuinv, 1:my grad desc. has problems
     EXE.offset_dyn = 1;              % 1:learn dyn as unperturbed + novel dyn   0: learn the usual way
     EXE.offset_SC  = 1*(1-EXE.offset_dyn)+EXE.offset_dyn*2000;           % hack to make matlab nn to progress in grad.descent 
@@ -807,9 +749,8 @@ end
 function [traj_area, init_traj_area] = signed_patharea(data)
     global EXE
     ofx = data.act_cartpos(2:end,1) - data.act_cartpos(1,1);
-    %ofx(ofx<0)=0;  % to consider only the positive side area
+    % Change to ofx(ofx<0)=0;  % to consider only the positive side area
     traj_area = 10000*sum(ofx.*abs(data.act_cartpos(2:end,2)-data.act_cartpos(1:end-1,2)));  % in cm^2
-    %T0_inms = 500;  INI_endtime = T0_inms/1000; t0_ix =  round((INI_endtime / EXE.endtime)*EXE.timesteps);
     t0_ix = min(find(data.act_cartpos(:,2) >= data.act_cartpos(1,2)+0.025*1));
     init_traj_area = 10000*sum(ofx(1:t0_ix-1,1).*(data.act_cartpos(2:t0_ix,2)-data.act_cartpos(1:t0_ix-1,2)));  %in cm^2
 end
@@ -839,10 +780,8 @@ function plot_data(data, par, figno, str)
     title(sprintf('tracking error (%s)',str));
     subplot(2,1,2);
     
-    %isfall = data.isfalltrial(sel);
-    %bar(tsel(isfall>0), isfall(isfall>0)); hold on;
+
     plot(tsel,data.del_q(sel,:),'-', 'Linewidth',2); hold on;
-    %plot(tsel, data.isfalltrial(sel),'g-','Linewidth',5); 
     plot(tsel, data.zmp(sel),'k');
     legend('del_{q1}','del_{q2}');
 
@@ -896,7 +835,7 @@ function [xin,yout,accel] = sample_rbuf
     accel = RBUF.accel(ix,:);
 end
 
-% Using the experience buffer learn the idynamicsof the system
+% Using the experience buffer learn the idynamics of the system
 function [err_out, err_max] = learn_batch(rate, ler_type, par)
     global EXE RBUF RBUFc RBUFfull 
     global W dynnet 
@@ -924,7 +863,6 @@ function [err_out, err_max] = learn_batch(rate, ler_type, par)
         W_samp = pinv(Xexpanded)*Y;
         delW = W - (W_samp*beta + (1-beta)*W);     % make an weight average of the current estimate to avoid large jumps. (beta can be tuned.)
         W = W - delW;   
-        %W = W_samp*beta + (1-beta)*W;
         pred_torques = Xexpanded*W;
     end
     if ler_type==2                                 % use matlabs nn toolbox
@@ -1015,7 +953,7 @@ function trajSP = make_trajSP(trajpar, endTime)
     trajSP.ddq2s = ddq2s;
     trajSP.CP = CP;
     trajSP.CPb = CPb;                % begin value
-    trajSP.CPe = CPe;                  % end value
+    trajSP.CPe = CPe;                % end value
 end
 
 function [compcost, safetycost, fallcost, fallstat, data] =execute_movement(x0, trajSP, fb_MUL, timeSteps, endTime, par, showlip)
@@ -1056,8 +994,6 @@ function [compcost, safetycost, fallcost, fallstat, data] =execute_movement(x0, 
         fallstat = -fallstat;
     end
     first_roll = 0; 
-    %figno = max([showlip, (1-sign(showlip))*999]);  % open figno 999 if showlip==0
-    %figure(figno);
     if ~SILENT
         if (showlip~=0)
             figure(showlip);
@@ -1067,18 +1003,15 @@ function [compcost, safetycost, fallcost, fallstat, data] =execute_movement(x0, 
         end
     end
     
-   % set(gcf,'Position',[320,0,300,350])
-    %grid on; grid minor;
     if showlip & ~SILENT >0
         clf;
-        %plot(p(:,1), p(:,2))
         [maxfatx , maxfatix]  = draw_controlled_LIP(q(:,1),q(:,2),t,body,0.000);
         plot (zmp, p(:,2),'g-');
         plot(data.des_cartpos(:,1), data.des_cartpos(:,2),'k-','Linewidth', 1.5);
         plot(data.act_cartpos(:,1), data.act_cartpos(:,2),'m.','Linewidth', 2);
         
     end
-    if ~SILENT,     
+    if ~SILENT 
         show_CPgrad(trajSP.CP, cart_grad);
         if (failed)
             xlabel(sprintf('traj err:(%2.3f,  %2.3f)',data.trajErr(1),data.trajErr(2)));        
@@ -1206,8 +1139,6 @@ function [Jsafety, Jeffort, fallcost, p, q, data] = run_control(trajSP,  fb_MUL,
                     fallcost_fr = fallcost_fr  + (ZMP - body.toe_dist)*0 + (N-i)+0*(x(2))^2; 
                 else   
                     fallcost_fr = fallcost_fr + (ZMP - body.toe_dist);
-                    %fallcost_fr = fallcost_fr + (ZMP - body.toe_dist)*(N-i)/N; %*(N-i)/N;%*(N-i)*dt*1;
-                    %fallcost_fr = fallcost_fr + abs(ZMP - 0.9*body.toe_dist)*(N-i)/N;  
                 end
             end
             if EXE.noCONTafterFALL==1, FALLING = true; end
@@ -1219,30 +1150,19 @@ function [Jsafety, Jeffort, fallcost, p, q, data] = run_control(trajSP,  fb_MUL,
                 else 
                     fallcost_ba =  fallcost_ba - (ZMP + body.heel_dist) ; 
                 end
-                %fallcost_ba =  fallcost_ba - (ZMP + body.heel_dist)*(N-i)/N; %*(N-i)/N; %*abs(x(4));*(N-i)*dt*1;
-                %fallcost_ba =  fallcost_ba + abs(ZMP - 0.9*body.toe_dist)*(N-i)/N; %*(N-i)/N; %*abs(x(4));*(N-i)*dt*1;
             end
             if EXE.noCONTafterFALL==1, FALLING = true; end
-            %fprintf('Heel zmp bad: %1.4f height:%1.3f\n', ZMP,pos(2));
+            % fprintf('Heel zmp bad: %1.4f height:%1.3f\n', ZMP,pos(2));
         end
          
         Jsafety = Jsafety + count_err*abs(ZMP - 0.5*body.toe_dist)  ;
-        %Jsafety = max(Jsafety, 0.5*N*err_range*abs(ZMP - 0.95*body.toe_dist));
-        %Jsafety = Jsafety + err_range*abs(pos(1) - 0.95*body.toe_dist);
-        %Jsafety = max(Jsafety, 0.5*N*err_range*abs(pos(1) - 0.95*body.toe_dist));
-        Jeffort = Jeffort + count_err*(abs(u(1)) + 6.3766*abs(u(2)))/1000; % 6.3766 normalizes the actuation based on maximal absolute torques
-        %Jenergy = Jenergy + err_range*(u(1)^2 + 6.3766*u(2)^2)^0.5/1000;
-        
+        Jeffort = Jeffort + count_err*(abs(u(1)) + 6.3766*abs(u(2)))/1000; % 6.3766 normalizes the actuation based on maximal absolute torques        
     end
     
     data.zmp = zmp;
     data.tm  = t;
-    % If you want to use max zmp as fallcost
-    %frontfall = zmp(zmp>body.toe_dist & p(:,2)<1.15) - body.toe_dist;
-    %backfall  = -zmp(zmp <-heel_dist & p(:,2)<1.15) + heel_dist;
-    %fallcost  = 20*max([0;frontfall; backfall]);
-    
-    % if endpointis not close to 0,1.2 consider it as a failure
+   
+    % if endpoint is not close to 0,1.2 consider it as a failure
     if norm(pos-body.EXTENDED_CART) > 0.5
         fallcost_he = fallcost_he + norm(pos-body.EXTENDED_CART);
     end
@@ -1298,15 +1218,11 @@ function show_CPgrad(CP, grad)
     plot(xx,yy,'ro'); hold on;
     plot(xx, yy,'b-'); 
     dim = size(grad,1)/2;
-    GRIX = 1;  %1:CompCOST 2:FailCOST 3:SafetyCOST
     grSC = 0.01;
-    for k = 1:dim
-        %plot([xx(k+1),xx(k+1)-grad(k, 1)*grSC],[xx(k+1),yy(k+1)-grad(k+dim,1)*grSC],'r--');  
+    for k = 1:dim  
         quiver(xx(k+1),yy(k+1),-grad(k, 1)*grSC,-grad(k+dim,1)*grSC,0,'r');
         quiver(xx(k+1),yy(k+1),-grad(k, 2)*grSC,-grad(k+dim,2)*grSC,0,'g');
-        quiver(xx(k+1),yy(k+1),-grad(k, 3)*grSC,-grad(k+dim,3)*grSC,0,'b');
-        %plot([xx(k+1),xx(k+1)-grad(k, 2)*grSC],[yy(k+1),yy(k+1)-grad(k+dim,2)*grSC],'g--');  
-        %plot([xx(k+1),xx(k+1)-grad(k, 3)*grSC],[yy(k+1),yy(k+1)-grad(k+dim,3)*grSC],'k--');  
+        quiver(xx(k+1),yy(k+1),-grad(k, 3)*grSC,-grad(k+dim,3)*grSC,0,'b'); 
     end
     drawnow;
 end
@@ -1390,15 +1306,12 @@ function torques_u = invdyn_true(x, des_acc, par)
     torques_u = my_inv_dyn(x(:,1),x(:,2),des_acc(:,1),x(:,3),x(:,4),des_acc(:,2),par);
 end
 
-% make sure that first elements are always the original X!
+% Add higher order terms but make sure that first elements are always the original X
 function hX = expandX(Xin, accel)
     X = [Xin, accel];
     hX = [X, sin(X(:,2)),  X.^2, X.^3];
-    %hX = X;
-    %hX = [X, sin(X(:,2)), accel];
 end
 
-% function hX = expandX(X, accel)
 function pred_torques = invdyn_model_pred(x, des_acc,par)
     global W dynnet EXE first_roll
     global perfectIDYN
@@ -1430,112 +1343,16 @@ function pred_torques = invdyn_model_pred(x, des_acc,par)
     end
 end
 
-% function err = invdyn_model_learn(x, u, acc, time, par)
-%     % learn data point (x,acc) -> u
-%     return;
-% end
 
 function [T]= my_inv_dyn(q1,dq1,ddq1,q2,dq2,ddq2,par)
-
 g = 9.81;
-
 m = par(1);
 K = par(2);
- 
 T = [ m*ddq1 - m*(q1.*dq2.^2 - g*sin(q2)) + K*cos(q2).*(dq1.*sin(q2) + dq2.*q1.*cos(q2)),...
       m*q1.^2.*ddq2 + m*q1.*(2*dq1.*dq2 + g*cos(q2)) - K*q1.*sin(q2).*(dq1.*sin(q2) + dq2.*q1.*cos(q2))]';
- 
 end
 
-function [delcc, delfc , delsc] = numeric_cost_grads(a,fb_MUL, x0, timeSteps, endTime, par)
-global first_roll  body SILENT EXE  perfectIDYN
-    orgperfectIDYN = perfectIDYN;
-    orgbodyxnoiseon = body.xnoiseon
-    
-    body.xnoiseon = 0;
-    perfectIDYN = 1;
-    
-    myeps = 0.001;
-    t = linspace(0,endTime,timeSteps)';
-    dt = t(2)-t(1);
-    
-    [cost0, fallcost0,safetycost0, ~,~,~] = objfun(a, fb_MUL, x0, t, par);
-
-    delcc = a*0; delfc = delcc; delsc = delcc;
-    for k=1:length(a)
-        a(k) = a(k) + myeps;
-        [cost1, fallcost1,safetycost1, ~,~,~] = objfun(a, fb_MUL, x0, t, par);
-        a(k) = a(k) - myeps;
-        delcc(k) = (cost1-cost0)/myeps;
-        delfc(k) = (fallcost1-fallcost0)/myeps;
-        delsc(k) = (safetycost1-safetycost0)/myeps;
-    end
-    if (sum(isnan(delcc))+sum(isnan(delfc))+sum(isnan(delsc)))>0,
-        fprintf('numeric deriv has NAN!\n');
-    end
-    perfectIDYN = orgperfectIDYN;
-    body.xnoiseon = orgbodyxnoiseon;
-end
-
-
-
-function [compcost, fallcost, safetycost, zmp, xy, T_his] = objfun(a, fb_MUL, x0, t, par)
-global EXE body
-    trajSP = make_trajSP(a, EXE.endtime);
-    dt = t(2)-t(1);
-    [Jsafety, Jeffort,fallcost, p, q, data] = run_control(trajSP,  fb_MUL, x0, t, par);
-    if body.cost_type == -1
-        compcost = Jeffort;
-    elseif body.cost_type == 1
-        compcost = Jsafety;
-    elseif body.cost_type == 0         % composite/mixed cost
-       compcost = Jeffort*body.effortW + (1-body.effortW)*Jsafety;
-    end 
-    safetycost = Jsafety;
-    zmp = data.zmp;
-    xy = data.act_cartpos;
-    T_his = data.net_u;
-    
-end
-
-function [obj] = fmin_objfun(a)
-global EXE body myfminpars
-    
-    myfminpars.iter = myfminpars.iter+1;
-    if (mod(myfminpars.iter,10)==0),
-        fprintf('fminsearch %d > \n',myfminpars.iter);
-    end
-    trajSP = make_trajSP(a, EXE.endtime);
-    %dt = t(2)-t(1);
-    [Jsafety, Jeffort,fallcost, p, q, data] = run_control(trajSP,  myfminpars.fb_MUL , myfminpars.x0, myfminpars.t, myfminpars.par);
-    if body.cost_type == -1
-        compcost = Jeffort;
-    elseif body.cost_type == 1
-        compcost = Jsafety;
-    elseif body.cost_type == 0         % composite/mixed cost
-       compcost = Jeffort*body.effortW + (1-body.effortW)*Jsafety;
-    end 
-    %safetycost = Jsafety;
-    %zmp = data.zmp;
-    %xy = data.act_cartpos;
-    %T_his = data.net_u;
-    
-    obj = 100*fallcost + compcost;
-end
-
-function [des_cartpos, des_xtraj] = trajSP2cart(trajSP)
-    global EXE
-    t = linspace(0,EXE.endtime,EXE.timesteps)';
-    des_xtraj=[];
-    des_cartpos=[];
-    for i=1:length(t)
-        [des_x, des_acc] = spline2vec(trajSP.q1s,trajSP.q2s,trajSP.dq1s,trajSP.dq2s, trajSP.ddq1s, trajSP.ddq2s, t(i));
-        des_xtraj(i,:) = des_x;
-        des_cartpos(i,:) = forward_kin([des_x(:,1),des_x(:,3)]);
-    end
-end
-
-
+% Can produce an animation of the learning with this
 function frames2avi(F, fname, rate)    
     writerObj = VideoWriter(fname);
     writerObj.FrameRate = rate;
