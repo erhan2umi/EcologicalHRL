@@ -42,5 +42,8 @@ experiment simulation that is stored under keep1_REPS2021_4_21_15_0.
 The data plots and results can be regenerated with entering this command from
 the Matlab console: show_stats_disc_succnorm_sem("keep1_REPS2021_4_21_15_0",60)
 
+**Citation info:** This repo is connected to the following paper. Please cite it if you make use of this repo. 
 
+Babic J, Kunavar T, Oztop E, Kawato M (2025) Success-Efficient/Failure-Safe Strategy for Hierarchical Reinforcement Motor Learning. 
+PLoS Comput Biol 21(5): e1013089. doi:10.1371/journal.pcbi.1013089.
  
